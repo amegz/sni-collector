@@ -33,6 +33,13 @@ applications and the proxy is unaffected in every way.
   the `server_name` (SNI) extension of the `ClientHello`. It never touches
   anything beyond the `ClientHello` — no decryption, no MITM, no HTTP
   parsing, no Application Data.
+- Transparently handles proxies that expect an explicit HTTP `CONNECT`
+  tunnel request before the client starts TLS (e.g. Squid on the classic
+  port 3128): the plaintext `CONNECT host:443 HTTP/1.1\r\n...\r\n\r\n` line
+  that precedes the `ClientHello` on the same TCP stream is recognized and
+  skipped once per connection; parsing then resumes on the bytes that
+  follow. Streams that start with a TLS record directly (no proxy tunnel in
+  front) work exactly as before.
 - Logs `timestamp`, `source IP`, optionally `source port`, and `SNI`.
   Nothing else is ever written to the log.
 - Once a connection's outcome is known (SNI found, no SNI present, not TLS,
@@ -231,8 +238,10 @@ go test ./... -race     # same, with the race detector
 - `internal/tlssni`: unit tests covering TLS 1.2 and TLS 1.3 `ClientHello`s
   with SNI, `ClientHello` without SNI (including an ECH-shaped extension),
   fragmentation (down to one byte per write), multiple simultaneous/
-  independent connections, malformed/truncated/garbage TLS input, and the
-  buffer-limit give-up path.
+  independent connections, malformed/truncated/garbage TLS input, the
+  buffer-limit give-up path, and a `ClientHello` preceded by an HTTP
+  `CONNECT` tunnel request (whole, split at the boundary, and fragmented
+  byte-by-byte across both parts).
 - `internal/dedup`: TTL suppression and expiry.
 - `internal/capture` (`TestIntegrationRealPcapTwoConnectionsWithReorderAndRetransmit`):
   an integration test that builds a **real `.pcap` file** (Ethernet/IPv4/TCP
@@ -255,9 +264,12 @@ go test ./... -race     # same, with the race detector
 - A `ClientHello` split across multiple TLS records (rather than multiple
   TCP segments of one record) is not supported — this does not happen in
   practice with real TLS stacks and is out of scope per the spec.
-- Non-TLS traffic to the proxy port (e.g. a broken client speaking HTTP
-  `CONNECT` first) is recognized as "not TLS" and its state is dropped
-  immediately; it is never treated as an error.
+- An HTTP `CONNECT` tunnel request (the normal way of getting HTTPS through
+  an explicit forward proxy like Squid) is detected and skipped once per
+  connection so the `ClientHello` behind it is still found — see "What it
+  does" above. Non-TLS traffic that isn't a `CONNECT`-shaped preamble either
+  (or a `CONNECT` never followed by TLS at all) is recognized as "not TLS"
+  and its state is dropped immediately; it is never treated as an error.
 - The collector may attach to a connection that was already established
   before it started (or restarted): it treats the first packet it observes
   on a new flow as the stream's start even without seeing a `SYN`, so it

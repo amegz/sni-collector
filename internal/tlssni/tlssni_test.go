@@ -389,3 +389,85 @@ func buildOpaqueExtension(extType uint16, data []byte) []byte {
 	ext.Write(data)
 	return ext.Bytes()
 }
+
+// Real-world forward proxies (Squid and friends) expect an HTTP CONNECT
+// tunnel request before the client starts TLS: the client sends the
+// CONNECT request in the clear, then - on the very same TCP connection -
+// starts the actual TLS ClientHello once the proxy replies "200 Connection
+// established". Since the capture only sees the client->proxy direction,
+// the CONNECT request and the ClientHello appear back-to-back in this
+// stream's byte sequence, with nothing in between.
+
+func TestClientHelloAfterHTTPConnectPreambleWholeAtOnce(t *testing.T) {
+	o := defaultOpts()
+	o.sni = "registry.example.com"
+	preamble := "CONNECT registry.example.com:443 HTTP/1.1\r\nHost: registry.example.com:443\r\nUser-Agent: test/1.0\r\n\r\n"
+	rec := buildClientHelloRecord(o)
+
+	p := NewParser()
+	res := p.Write(append([]byte(preamble), rec...))
+	if res != ResultFound {
+		t.Fatalf("expected ResultFound, got %v", res)
+	}
+	if got := p.SNI(); got != o.sni {
+		t.Fatalf("SNI = %q, want %q", got, o.sni)
+	}
+}
+
+func TestClientHelloAfterHTTPConnectPreambleSplitAtBoundary(t *testing.T) {
+	o := defaultOpts()
+	o.sni = "registry.example.com"
+	preamble := "CONNECT registry.example.com:443 HTTP/1.1\r\nHost: registry.example.com:443\r\n\r\n"
+	rec := buildClientHelloRecord(o)
+
+	p := NewParser()
+	if res := p.Write([]byte(preamble)); res != ResultIncomplete {
+		t.Fatalf("after preamble only: expected ResultIncomplete, got %v", res)
+	}
+	res := p.Write(rec)
+	if res != ResultFound {
+		t.Fatalf("expected ResultFound, got %v", res)
+	}
+	if got := p.SNI(); got != o.sni {
+		t.Fatalf("SNI = %q, want %q", got, o.sni)
+	}
+}
+
+func TestClientHelloAfterHTTPConnectPreambleFragmented(t *testing.T) {
+	// Mirrors a real capture: CONNECT line arrives in one TCP segment, the
+	// ClientHello arrives split across several more.
+	o := defaultOpts()
+	o.sni = "ioc-gw-prod-eu-1c.example.net"
+	preamble := "CONNECT ioc-gw-prod-eu-1c.example.net:443 HTTP/1.1\r\nHost: ioc-gw-prod-eu-1c.example.net:443\r\nUser-Agent: S1-LIN/25.2.2.14\r\n\r\n"
+	rec := buildClientHelloRecord(o)
+
+	full := append([]byte(preamble), rec...)
+	p := NewParser()
+	var res Result
+	for _, chunk := range splitInto(full, 7) {
+		res = p.Write(chunk)
+		if res == ResultFound {
+			break
+		}
+	}
+	if res != ResultFound {
+		t.Fatalf("expected ResultFound, got %v", res)
+	}
+	if got := p.SNI(); got != o.sni {
+		t.Fatalf("SNI = %q, want %q", got, o.sni)
+	}
+}
+
+func TestPlainHTTPWithoutFollowingTLSIsNotFound(t *testing.T) {
+	// A CONNECT (or any HTTP request) with nothing TLS-shaped after it must
+	// not be mistaken for a ClientHello, and must not hang forever either.
+	p := NewParser()
+	res := p.Write([]byte("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"))
+	if res != ResultIncomplete {
+		t.Fatalf("expected ResultIncomplete (still waiting for a possible ClientHello), got %v", res)
+	}
+	res = p.Write([]byte("GET /health HTTP/1.1\r\nHost: example.com\r\n\r\n"))
+	if res == ResultFound {
+		t.Fatalf("expected non-TLS follow-up data to NOT produce ResultFound")
+	}
+}

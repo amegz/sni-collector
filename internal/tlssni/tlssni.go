@@ -9,6 +9,7 @@
 package tlssni
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 )
@@ -53,10 +54,11 @@ var errMalformed = errors.New("tlssni: malformed TLS ClientHello")
 //
 // It is not safe for concurrent use.
 type Parser struct {
-	buf       []byte
-	maxBuffer int
-	sni       string
-	done      bool
+	buf         []byte
+	maxBuffer   int
+	sni         string
+	done        bool
+	httpChecked bool
 }
 
 // NewParser creates a Parser with the default buffer cap.
@@ -96,6 +98,12 @@ func (p *Parser) Write(b []byte) Result {
 		}
 	}
 
+	if !p.httpChecked {
+		if res, stop := p.checkHTTPConnectPreamble(); stop {
+			return res
+		}
+	}
+
 	sni, res := tryParse(p.buf)
 	switch res {
 	case ResultFound:
@@ -114,6 +122,53 @@ func (p *Parser) Write(b []byte) Result {
 	default:
 		return res
 	}
+}
+
+// checkHTTPConnectPreamble detects and strips a plaintext HTTP CONNECT
+// request some forward proxies expect before the tunneled TLS ClientHello,
+// e.g.:
+//
+//	CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n
+//	<TLS ClientHello bytes follow here, on the very same TCP stream>
+//
+// The proxy's response to the CONNECT (e.g. "HTTP/1.1 200 Connection
+// established") travels in the proxy->client direction and is never seen
+// here (the capture only looks at client->proxy packets), but that doesn't
+// matter: TCP sequence numbers for this direction keep incrementing
+// regardless of what arrives on the other side, so the ClientHello lands
+// immediately after the CONNECT request in this stream's byte sequence.
+//
+// This runs at most once per Parser (guarded by httpChecked): once resolved
+// either way, subsequent bytes go straight through the normal TLS record
+// parser. stop=true means Write should return res immediately without
+// attempting TLS parsing on this call.
+func (p *Parser) checkHTTPConnectPreamble() (res Result, stop bool) {
+	if len(p.buf) == 0 {
+		return ResultIncomplete, true
+	}
+	if p.buf[0] == contentHandshake {
+		// No preamble: the stream starts with a TLS record already.
+		p.httpChecked = true
+		return 0, false
+	}
+	if p.buf[0] < 'A' || p.buf[0] > 'Z' {
+		// Neither a TLS record nor the start of an HTTP request line
+		// (all HTTP methods start with an uppercase letter).
+		p.done = true
+		return ResultNotTLS, true
+	}
+	idx := bytes.Index(p.buf, []byte("\r\n\r\n"))
+	if idx < 0 {
+		if len(p.buf) >= p.maxBuffer {
+			p.done = true
+			return ResultTooLarge, true
+		}
+		return ResultIncomplete, true
+	}
+	// Drop the HTTP preamble; keep looking for a ClientHello in what follows.
+	p.buf = append([]byte(nil), p.buf[idx+4:]...)
+	p.httpChecked = true
+	return 0, false
 }
 
 // tryParse attempts to parse a complete TLS record + ClientHello out of buf.
