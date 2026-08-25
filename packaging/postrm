@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  purge)
+    if getent passwd sni-collector >/dev/null 2>&1; then
+      deluser --system sni-collector >/dev/null 2>&1 || true
+    fi
+    if getent group sni-collector >/dev/null 2>&1; then
+      delgroup --system sni-collector >/dev/null 2>&1 || true
+    fi
+    rm -rf /var/log/sni-collector
+    ;;
+  *)
+    ;;
+esac
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+fi
+
+exit 0

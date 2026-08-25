@@ -1,0 +1,19 @@
+Package: sni-collector
+Version: VERSION_PLACEHOLDER
+Section: net
+Priority: optional
+Architecture: ARCH_PLACEHOLDER
+Depends: libpcap0.8t64 | libpcap0.8, adduser, systemd
+Maintainer: Andrey (amix) <amix@amix.kiev.ua>
+Homepage: https://github.com/amix/sni-collector
+Description: Passive TLS SNI collector for proxy-bound traffic
+ sni-collector is a lightweight, purely passive packet-capture tool for a
+ Linux host that sits in front of a known HTTP/HTTPS proxy. It watches the
+ TCP traffic containers or other applications send to that proxy,
+ reassembles TLS ClientHello messages via TCP stream reassembly, and logs
+ the SNI (server_name) each connection requested.
+ .
+ It never modifies, delays, drops, or originates any network traffic: it
+ only reads from a passive libpcap capture, filtered at the kernel (BPF)
+ level to the configured proxy IP:port. No TLS decryption, no MITM, no
+ HTTP inspection, and no full-traffic DPI are performed.

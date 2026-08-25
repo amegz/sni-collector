@@ -1,0 +1,45 @@
+[Unit]
+Description=Passive TLS SNI collector for proxy-bound traffic
+Documentation=https://github.com/amix/sni-collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Run as a dedicated, unprivileged user. CAP_NET_RAW/CAP_NET_ADMIN are
+# granted to the process at exec time via AmbientCapabilities below, so the
+# binary never needs to run as root and never needs setuid/setcap on disk.
+# Create the user first, e.g.:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin sni-collector
+User=sni-collector
+Group=sni-collector
+
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=true
+
+EnvironmentFile=/etc/sni-collector/sni-collector.env
+ExecStart=/usr/local/bin/sni-collector $SNI_COLLECTOR_ARGS
+
+Restart=on-failure
+RestartSec=5s
+
+# sni-collector never writes anywhere except its own --output log file and
+# never needs network sockets of its own beyond the raw capture socket
+# implied by the capabilities above.
+LogsDirectory=sni-collector
+LogsDirectoryMode=0750
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_PACKET AF_INET AF_INET6 AF_UNIX
+MemoryDenyWriteExecute=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

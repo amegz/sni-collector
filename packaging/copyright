@@ -1,0 +1,11 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: sni-collector
+Source: https://github.com/amix/sni-collector
+
+Files: *
+Copyright: 2026 Andrey (amix)
+License: Internal-Use
+
+License: Internal-Use
+ This software is for internal use. Redistribution terms have not been
+ formally assigned; contact the copyright holder before redistributing.

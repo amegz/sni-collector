@@ -1,0 +1,4 @@
+/sni-collector
+*.log
+*.pcap
+/dist/

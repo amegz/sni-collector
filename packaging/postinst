@@ -1,0 +1,38 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    if ! getent group sni-collector >/dev/null 2>&1; then
+      addgroup --system sni-collector
+    fi
+    if ! getent passwd sni-collector >/dev/null 2>&1; then
+      adduser --system --ingroup sni-collector --no-create-home \
+        --home /nonexistent --shell /usr/sbin/nologin sni-collector
+    fi
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+  *)
+    ;;
+esac
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+fi
+
+cat <<'EOT'
+sni-collector installed.
+
+Before starting the service, edit /etc/sni-collector/sni-collector.env and
+set --proxy-ip (and --proxy-port, if not 3128) to match your environment,
+then run:
+
+  systemctl enable --now sni-collector
+
+See /usr/share/doc/sni-collector/README.md for details.
+EOT
+
+exit 0
